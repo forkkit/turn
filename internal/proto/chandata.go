@@ -2,6 +2,7 @@ package proto
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 )
@@ -10,11 +11,10 @@ import (
 //
 // See RFC 5766 Section 11.4
 type ChannelData struct {
-	Data    []byte // can be subslice of Raw
-	Length  int    // ignored while encoding, len(Data) is used
-	Padding bool   // use  padding
-	Number  ChannelNumber
-	Raw     []byte
+	Data   []byte // can be subslice of Raw
+	Length int    // ignored while encoding, len(Data) is used
+	Number ChannelNumber
+	Raw    []byte
 }
 
 // Equal returns true if b == c.
@@ -58,9 +58,6 @@ func (c *ChannelData) Encode() {
 	c.Raw = c.Raw[:0]
 	c.WriteHeader()
 	c.Raw = append(c.Raw, c.Data...)
-	if !c.Padding {
-		return
-	}
 	padded := nearestPaddedValueLength(len(c.Raw))
 	if bytesToAdd := padded - len(c.Raw); bytesToAdd > 0 {
 		for i := 0; i < bytesToAdd; i++ {
@@ -88,8 +85,8 @@ func (c *ChannelData) WriteHeader() {
 	}
 	// Early bounds check to guarantee safety of writes below.
 	_ = c.Raw[:channelDataHeaderSize]
-	bin.PutUint16(c.Raw[:channelDataNumberSize], uint16(c.Number))
-	bin.PutUint16(c.Raw[channelDataNumberSize:channelDataHeaderSize],
+	binary.BigEndian.PutUint16(c.Raw[:channelDataNumberSize], uint16(c.Number))
+	binary.BigEndian.PutUint16(c.Raw[channelDataNumberSize:channelDataHeaderSize],
 		uint16(len(c.Data)),
 	)
 }
@@ -104,9 +101,9 @@ func (c *ChannelData) Decode() error {
 	if len(buf) < channelDataHeaderSize {
 		return io.ErrUnexpectedEOF
 	}
-	num := bin.Uint16(buf[:channelDataNumberSize])
+	num := binary.BigEndian.Uint16(buf[:channelDataNumberSize])
 	c.Number = ChannelNumber(num)
-	l := bin.Uint16(buf[channelDataNumberSize:channelDataHeaderSize])
+	l := binary.BigEndian.Uint16(buf[channelDataNumberSize:channelDataHeaderSize])
 	c.Data = buf[channelDataHeaderSize:]
 	c.Length = int(l)
 	if !c.Number.Valid() {
@@ -132,7 +129,12 @@ func IsChannelData(buf []byte) bool {
 	if len(buf) < channelDataHeaderSize {
 		return false
 	}
+
+	if int(binary.BigEndian.Uint16(buf[channelDataNumberSize:channelDataHeaderSize])) > len(buf[channelDataHeaderSize:]) {
+		return false
+	}
+
 	// Quick check for channel number.
-	num := bin.Uint16(buf[0:channelNumberSize])
+	num := binary.BigEndian.Uint16(buf[0:channelNumberSize])
 	return isChannelNumberValid(num)
 }
